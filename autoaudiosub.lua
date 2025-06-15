@@ -1,5 +1,5 @@
 --[[
-    AutoAudioSub - Extension VLC pour la sélection rapide des pistes audio et sous-titres
+    AutoAudioSub - VLC extension for quick audio and subtitle track selection
     Copyright (C) 2024
 
     This program is free software; you can redistribute it and/or modify
@@ -15,9 +15,9 @@
 
 -- Configuration
 local CONFIG_FILE = vlc.config.userdatadir() .. "/autosub_config.lua"
-local OPENSUBTITLES_API_KEY = "YOUR_API_KEY" -- À remplacer par votre clé API OpenSubtitles
+local OPENSUBTITLES_API_KEY = "YOUR_API_KEY" -- Replace with your OpenSubtitles API key
 
--- Variables globales
+-- Global variables
 local dialog = nil
 local audio_tracks = {}
 local subtitle_tracks = {}
@@ -26,7 +26,7 @@ local selected_subtitle = 0
 local preferences = {}
 local current_media_path = ""
 
--- Fonction pour charger les préférences
+-- Function to load preferences
 local function load_preferences()
     local file = io.open(CONFIG_FILE, "r")
     if file then
@@ -38,29 +38,29 @@ local function load_preferences()
     end
 end
 
--- Fonction pour sauvegarder les préférences
+-- Function to save preferences
 local function save_preferences()
     local file = io.open(CONFIG_FILE, "w")
     if file then
         file:write("return " .. vlc.strings.dump(preferences))
         file:close()
     else
-        vlc.msg.err("Impossible de sauvegarder les préférences")
+        vlc.msg.err("Unable to save preferences")
     end
 end
 
--- Fonction pour obtenir le nom de la piste
+-- Function to get track name
 local function get_track_name(track)
     if track and track.name and track.name ~= "" then
         return track.name
     elseif track and track.language and track.language ~= "" then
         return track.language
     else
-        return "Piste " .. track.id
+        return "Track " .. track.id
     end
 end
 
--- Fonction pour vérifier si une piste en français existe
+-- Function to check if a French subtitle exists
 local function has_french_subtitle()
     for _, track in ipairs(subtitle_tracks) do
         if track.language == "fr" then
@@ -70,7 +70,7 @@ local function has_french_subtitle()
     return false
 end
 
--- Fonction pour rechercher des sous-titres sur OpenSubtitles
+-- Function to search subtitles on OpenSubtitles
 local function search_subtitles()
     local input = vlc.input.item()
     if not input then return end
@@ -78,7 +78,7 @@ local function search_subtitles()
     local filename = input:name()
     local hash = input:hash()
     
-    -- Construction de la requête OpenSubtitles
+    -- Build OpenSubtitles request
     local url = "https://api.opensubtitles.com/api/v1/subtitles"
     local headers = {
         ["Api-Key"] = OPENSUBTITLES_API_KEY,
@@ -91,51 +91,51 @@ local function search_subtitles()
         moviehash = hash
     }
     
-    -- Envoi de la requête
+    -- Send request
     local response = vlc.net.http_post(url, headers, vlc.strings.dump(body))
     if not response then
-        vlc.msg.err("Erreur lors de la recherche de sous-titres")
+        vlc.msg.err("Error while searching for subtitles")
         return
     end
     
-    -- Traitement de la réponse
+    -- Process response
     local data = vlc.strings.from_json(response)
     if data and data.data and #data.data > 0 then
         local subtitle = data.data[1]
         local download_url = subtitle.attributes.files[1].file_url
         
-        -- Téléchargement du sous-titre
+        -- Download subtitle
         local subtitle_data = vlc.net.http_get(download_url)
         if subtitle_data then
-            -- Sauvegarde temporaire du fichier
+            -- Save temporary file
             local temp_file = os.tmpname() .. ".srt"
             local file = io.open(temp_file, "w")
             if file then
                 file:write(subtitle_data)
                 file:close()
                 
-                -- Ajout du sous-titre à la vidéo
+                -- Add subtitle to video
                 vlc.player.add_subtitle(temp_file)
                 
-                -- Mise à jour de la liste des sous-titres
+                -- Update subtitle list
                 subtitle_tracks = vlc.player.get_subtitle_tracks()
                 return true
             end
         end
     end
     
-    vlc.msg.err("Aucun sous-titre français trouvé")
+    vlc.msg.err("No French subtitles found")
     return false
 end
 
--- Fonction pour appliquer les préférences
+-- Function to apply preferences
 local function apply_preferences()
     local path = vlc.input.item():uri()
     local folder = path:match("(.*[/\\])")
     
     if preferences[folder] then
         local pref = preferences[folder]
-        -- Application des préférences audio
+        -- Apply audio preferences
         for _, track in ipairs(audio_tracks) do
             if track.language == pref.audio then
                 vlc.player.set_audio_track(track.id)
@@ -143,7 +143,7 @@ local function apply_preferences()
             end
         end
         
-        -- Application des préférences sous-titres
+        -- Apply subtitle preferences
         for _, track in ipairs(subtitle_tracks) do
             if track.language == pref.subtitle then
                 vlc.player.set_subtitle_track(track.id)
@@ -153,23 +153,23 @@ local function apply_preferences()
     end
 end
 
--- Fonction pour créer la fenêtre de dialogue
+-- Function to create dialog window
 local function create_dialog()
-    -- Récupération des pistes audio et sous-titres
+    -- Get audio and subtitle tracks
     audio_tracks = vlc.player.get_audio_tracks()
     subtitle_tracks = vlc.player.get_subtitle_tracks()
     
-    -- Création de la fenêtre de dialogue
-    dialog = vlc.dialog("Sélection Audio/Sous-titres")
+    -- Create dialog window
+    dialog = vlc.dialog("Audio/Subtitle Selection")
     
-    -- Création des listes déroulantes
+    -- Create dropdown lists
     local audio_label = dialog:add_label("Audio:")
     local audio_list = dialog:add_dropdown()
     
-    local subtitle_label = dialog:add_label("Sous-titres:")
+    local subtitle_label = dialog:add_label("Subtitles:")
     local subtitle_list = dialog:add_dropdown()
     
-    -- Remplissage des listes
+    -- Fill lists
     for _, track in ipairs(audio_tracks) do
         audio_list:add_value(get_track_name(track), track.id)
     end
@@ -178,16 +178,16 @@ local function create_dialog()
         subtitle_list:add_value(get_track_name(track), track.id)
     end
     
-    -- Champ pour le nom de la série/dossier
-    local folder_label = dialog:add_label("Nom de la série/dossier:")
+    -- Series/folder name field
+    local folder_label = dialog:add_label("Series/Folder name:")
     local folder_input = dialog:add_text_input()
     
-    -- Bouton de recherche de sous-titres
+    -- Subtitle search button
     local search_button = nil
     if not has_french_subtitle() then
-        search_button = dialog:add_button("Chercher sous-titres", function()
+        search_button = dialog:add_button("Search subtitles", function()
             if search_subtitles() then
-                -- Mise à jour de la liste des sous-titres
+                -- Update subtitle list
                 subtitle_list:clear()
                 for _, track in ipairs(subtitle_tracks) do
                     subtitle_list:add_value(get_track_name(track), track.id)
@@ -196,8 +196,8 @@ local function create_dialog()
         end)
     end
     
-    -- Bouton de sauvegarde des préférences
-    local save_pref_button = dialog:add_button("Sauvegarder préférences", function()
+    -- Save preferences button
+    local save_pref_button = dialog:add_button("Save preferences", function()
         local folder = folder_input:get_text()
         if folder and folder ~= "" then
             preferences[folder] = {
@@ -205,13 +205,13 @@ local function create_dialog()
                 subtitle = subtitle_tracks[subtitle_list:get_value()].language
             }
             save_preferences()
-            vlc.msg.info("Préférences sauvegardées pour " .. folder)
+            vlc.msg.info("Preferences saved for " .. folder)
         else
-            vlc.msg.err("Veuillez entrer un nom de série/dossier")
+            vlc.msg.err("Please enter a series/folder name")
         end
     end)
     
-    -- Boutons OK et Annuler
+    -- OK and Cancel buttons
     local ok_button = dialog:add_button("OK", function()
         selected_audio = audio_list:get_value()
         selected_subtitle = subtitle_list:get_value()
@@ -226,41 +226,41 @@ local function create_dialog()
         dialog:delete()
     end)
     
-    local cancel_button = dialog:add_button("Annuler", function()
+    local cancel_button = dialog:add_button("Cancel", function()
         dialog:delete()
     end)
     
-    -- Affichage de la fenêtre
+    -- Show window
     dialog:show()
 end
 
--- Fonction de descripteur de l'extension
+-- Extension descriptor function
 function descriptor()
     return {
         title = "AutoAudioSub",
         version = "1.0",
-        author = "Votre Nom",
-        shortdesc = "Sélection rapide des pistes audio et sous-titres",
-        description = "Ouvre une fenêtre de dialogue pour sélectionner rapidement les pistes audio et sous-titres",
+        author = "Your Name",
+        shortdesc = "Quick audio and subtitle track selection",
+        description = "Opens a dialog window to quickly select audio and subtitle tracks",
         capabilities = {"input-listener"}
     }
 end
 
--- Fonction d'activation de l'extension
+-- Extension activation function
 function activate()
     load_preferences()
     create_dialog()
     apply_preferences()
 end
 
--- Fonction de désactivation de l'extension
+-- Extension deactivation function
 function deactivate()
     if dialog then
         dialog:delete()
     end
 end
 
--- Fonction de fermeture de l'extension
+-- Extension close function
 function close()
     deactivate()
 end
