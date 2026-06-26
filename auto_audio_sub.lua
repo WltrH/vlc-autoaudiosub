@@ -245,6 +245,7 @@ function activate()
     prefs_file = vlc.config.userdatadir().."/audio_sub_prefs.lua"
     load_prefs()
     create_dialog()
+    do_refresh()
 end
 
 function deactivate()
