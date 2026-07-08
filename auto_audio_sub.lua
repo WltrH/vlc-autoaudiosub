@@ -15,7 +15,6 @@ local sub_tracks   = {}
 
 local prefs        = {}
 local prefs_file   = nil
-local meta_try     = 0
 local pending_pref = nil   -- préf en attente si input_changed n'a pas pu charger les pistes
 
 -- ── Utilitaires ───────────────────────────────────────────────────────────────
@@ -208,26 +207,8 @@ function do_info()
     local folder = folder_of(uri) or "?"
     local n = 0; for _ in pairs(prefs) do n=n+1 end
     local pref = find_pref(folder)
-    local pstr = pref and ('audio="'..pref.audio_label..'" 0idx='..tostring(pref.audio_0idx)..
-                           ' sub="'..pref.sub_label..'" 0idx='..tostring(pref.sub_0idx)..'")') or "aucune"
+    local pstr = pref and ('audio="'..pref.audio_label..'" sub="'..pref.sub_label..'"') or "aucune"
     set_status(n.." préf. | "..folder:match("[^/]+$").." | "..pstr)
-end
-
--- ── Auto-apply ────────────────────────────────────────────────────────────────
-
-local function auto_apply_for(pref)
-    -- 1. Applique la préférence initiale (pour le démarrage du flux)
-    apply_track_pref(pref.audio_0idx, pref.sub_0idx)
-
-    -- 2. Tente aussi le switch runtime si les pistes sont lisibles
-    if load_tracks() then
-        local aid = resolve_id(audio_tracks, pref.audio_label, -1)
-        local sid = resolve_id(sub_tracks,   pref.sub_label,   -1)
-        apply_es(aid, sid)
-        set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'" ('..meta_try..')')
-    else
-        set_status("Auto: pistes pas encore disponibles (essai "..meta_try..")")
-    end
 end
 
 -- ── VLC callbacks ─────────────────────────────────────────────────────────────
@@ -235,7 +216,7 @@ end
 function descriptor()
     return {
         title        = "Auto Audio/Sub Preferences",
-        version      = "1.2",
+        version      = "1.4",
         author       = "WltrH",
         shortdesc    = "Audio/sous-titres auto par dossier",
         description  = "Mémorise et applique audio + sous-titres par dossier.",
@@ -280,7 +261,6 @@ function input_changed()
 end
 
 function meta_changed()
-    meta_try = meta_try + 1
     pcall(function()
         local pref = pending_pref
         if not pref then
