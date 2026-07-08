@@ -1,8 +1,8 @@
 --[[
-    auto_audio_sub.lua  v1.3
+    auto_audio_sub.lua  v1.4
     Mémorise et applique automatiquement audio + sous-titres par dossier.
-    input_changed  → applique audio-es + audio-track dès le changement de fichier
-    meta_changed   → réapplique audio-es en backup si input_changed était trop tôt
+    input_changed  → tente apply immédiat ; si pistes pas prêtes, garde pending_pref
+    meta_changed   → retry avec pending_pref jusqu'à ce que les pistes soient lisibles
 ]]
 
 local dlg        = nil
@@ -13,9 +13,10 @@ local lbl_status = nil
 local audio_tracks = {}
 local sub_tracks   = {}
 
-local prefs      = {}
-local prefs_file = nil
-local meta_try   = 0
+local prefs        = {}
+local prefs_file   = nil
+local meta_try     = 0
+local pending_pref = nil   -- préf en attente si input_changed n'a pas pu charger les pistes
 
 -- ── Utilitaires ───────────────────────────────────────────────────────────────
 
@@ -142,6 +143,7 @@ end
 -- ── Boutons ───────────────────────────────────────────────────────────────────
 
 function do_refresh()
+    if not dd_audio or not dd_sub then return end
     if not load_tracks() then
         set_status("Aucune piste — lance un fichier puis réessaie.")
         return
@@ -245,7 +247,7 @@ function activate()
     prefs_file = vlc.config.userdatadir().."/audio_sub_prefs.lua"
     load_prefs()
     create_dialog()
-    do_refresh()
+    pcall(do_refresh)
 end
 
 function deactivate()
@@ -256,7 +258,8 @@ end
 function close() deactivate() end
 
 function input_changed()
-    meta_try = 0
+    meta_try    = 0
+    pending_pref = nil
     pcall(function()
         local item = vlc.input.item()
         if not item then return end
@@ -269,6 +272,9 @@ function input_changed()
             local sid = resolve_id(sub_tracks,   pref.sub_label,   -1)
             apply_es(aid, sid)
             set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'"')
+        else
+            -- Pistes pas encore prêtes : meta_changed tentera le retry
+            pending_pref = pref
         end
     end)
 end
@@ -276,12 +282,23 @@ end
 function meta_changed()
     meta_try = meta_try + 1
     pcall(function()
-        local item = vlc.input.item()
-        if not item then return end
-        local folder = folder_of(item:uri())
-        local pref = folder and find_pref(folder)
+        local pref = pending_pref
+        if not pref then
+            -- Pas de pending : cherche via l'item courant
+            local item = vlc.input.item()
+            if not item then return end
+            local folder = folder_of(item:uri())
+            pref = folder and find_pref(folder)
+        end
         if not pref then return end
-        auto_apply_for(pref)
+        if load_tracks() then
+            local aid = resolve_id(audio_tracks, pref.audio_label, -1)
+            local sid = resolve_id(sub_tracks,   pref.sub_label,   -1)
+            apply_es(aid, sid)
+            apply_track_pref(pref.audio_0idx, pref.sub_0idx)
+            pending_pref = nil
+            set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'" (meta)')
+        end
     end)
 end
 
