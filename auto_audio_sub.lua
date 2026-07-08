@@ -15,7 +15,7 @@ local sub_tracks   = {}
 
 local prefs        = {}
 local prefs_file   = nil
-local pending_pref = nil   -- préf en attente si input_changed n'a pas pu charger les pistes
+local pending_pref = nil
 
 -- ── Utilitaires ───────────────────────────────────────────────────────────────
 
@@ -239,7 +239,6 @@ end
 function close() deactivate() end
 
 function input_changed()
-    meta_try    = 0
     pending_pref = nil
     pcall(function()
         local item = vlc.input.item()
@@ -251,10 +250,12 @@ function input_changed()
         if load_tracks() then
             local aid = resolve_id(audio_tracks, pref.audio_label, -1)
             local sid = resolve_id(sub_tracks,   pref.sub_label,   -1)
-            apply_es(aid, sid)
-            set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'"')
+            if apply_es(aid, sid) then
+                set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'"')
+            else
+                pending_pref = pref
+            end
         else
-            -- Pistes pas encore prêtes : meta_changed tentera le retry
             pending_pref = pref
         end
     end)
@@ -264,7 +265,6 @@ function meta_changed()
     pcall(function()
         local pref = pending_pref
         if not pref then
-            -- Pas de pending : cherche via l'item courant
             local item = vlc.input.item()
             if not item then return end
             local folder = folder_of(item:uri())
@@ -274,10 +274,11 @@ function meta_changed()
         if load_tracks() then
             local aid = resolve_id(audio_tracks, pref.audio_label, -1)
             local sid = resolve_id(sub_tracks,   pref.sub_label,   -1)
-            apply_es(aid, sid)
-            apply_track_pref(pref.audio_0idx, pref.sub_0idx)
-            pending_pref = nil
-            set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'" (meta)')
+            if apply_es(aid, sid) then
+                apply_track_pref(pref.audio_0idx, pref.sub_0idx)
+                pending_pref = nil
+                set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'"')
+            end
         end
     end)
 end
