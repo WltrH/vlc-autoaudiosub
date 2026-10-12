@@ -1,8 +1,8 @@
 --[[
-    auto_audio_sub.lua  v1.4
+    auto_audio_sub.lua  v1.5
     Mémorise et applique automatiquement audio + sous-titres par dossier.
-    input_changed  → tente apply immédiat ; si pistes pas prêtes, garde pending_pref
-    meta_changed   → retry avec pending_pref jusqu'à ce que les pistes soient lisibles
+    input_changed → réapplique la préférence en boucle (jusqu'à ~15 s) tant que les pistes
+                    ne sont pas créées ou que VLC écrase la sélection par défaut
 ]]
 
 local dlg        = nil
@@ -15,7 +15,6 @@ local sub_tracks   = {}
 
 local prefs        = {}
 local prefs_file   = nil
-local pending_pref = nil
 
 -- ── Utilitaires ───────────────────────────────────────────────────────────────
 
@@ -119,24 +118,71 @@ end
 
 -- ── Application ───────────────────────────────────────────────────────────────
 
+-- Les ids de la liste "audio-es"/"spu-es" de l'input sont les vrais ids d'ES ;
+-- ils ne coïncident pas forcément avec les numéros "Flux N" de item:info().
+-- On les associe donc par ordre d'apparition.
+local function es_ids(input, var)
+    local ids = {}
+    local ok, vals = pcall(vlc.var.get_list, input, var)
+    if ok and type(vals) == "table" then
+        for _, v in ipairs(vals) do
+            if type(v) == "number" and v >= 0 then table.insert(ids, v) end
+        end
+    end
+    return ids
+end
+
+local function es_id_for(input, var, tracks, track_id)
+    if track_id == nil or track_id < 0 then return -1 end
+    local ids = es_ids(input, var)
+    for i, t in ipairs(tracks) do
+        if t.id == track_id then return ids[i] or track_id end
+    end
+    return track_id
+end
+
 local function apply_es(audio_id, sub_id)
     local input = vlc.object.input()
     if not input then return false end
-    pcall(vlc.var.set, input, "audio-es",    audio_id)
-    pcall(vlc.var.set, input, "spu-es",      sub_id)
+    pcall(vlc.var.set, input, "audio-es", es_id_for(input, "audio-es", audio_tracks, audio_id))
+    pcall(vlc.var.set, input, "spu-es",   es_id_for(input, "spu-es",   sub_tracks,   sub_id))
     return true
 end
 
-local function apply_track_pref(audio_0idx, sub_0idx)
-    -- audio-track/spu-track = index 0-based parmi les pistes du type (lus au démarrage du flux)
-    local input = vlc.object.input()
-    if not input then return end
-    if audio_0idx and audio_0idx >= 0 then
-        pcall(vlc.var.set, input, "audio-track", audio_0idx)
+local function sleep(sec)
+    vlc.misc.mwait(vlc.misc.mdate() + sec * 1000000)
+end
+
+-- Applique la préférence en réessayant : au moment d'input_changed les pistes
+-- n'existent pas encore, et VLC applique ensuite sa sélection par défaut.
+-- On s'arrête quand la sélection est restée correcte plusieurs passes de suite.
+local function apply_pref_with_retry(pref, uri)
+    local stable = 0
+    for _ = 1, 30 do
+        local item = vlc.input.item()
+        if not item or item:uri() ~= uri then return false end
+        local input = vlc.object.input()
+        if input and load_tracks() then
+            local aid = resolve_id(audio_tracks, pref.audio_label, nil)
+            local sid
+            if pref.sub_label == "" then sid = -1
+            else sid = resolve_id(sub_tracks, pref.sub_label, nil) end
+            local want_a = aid and es_id_for(input, "audio-es", audio_tracks, aid)
+            local want_s = sid and es_id_for(input, "spu-es",   sub_tracks,   sid)
+            local ok_a = (not want_a) or vlc.var.get(input, "audio-es") == want_a
+            local ok_s = (not want_s) or vlc.var.get(input, "spu-es")   == want_s
+            if ok_a and ok_s then
+                stable = stable + 1
+                if stable >= 3 then return true end
+            else
+                stable = 0
+                if not ok_a then pcall(vlc.var.set, input, "audio-es", want_a) end
+                if not ok_s then pcall(vlc.var.set, input, "spu-es",   want_s) end
+            end
+        end
+        sleep(0.5)
     end
-    if sub_0idx and sub_0idx >= 0 then
-        pcall(vlc.var.set, input, "spu-track", sub_0idx)
-    end
+    return false
 end
 
 -- ── Boutons ───────────────────────────────────────────────────────────────────
@@ -216,11 +262,11 @@ end
 function descriptor()
     return {
         title        = "Auto Audio/Sub Preferences",
-        version      = "1.4",
+        version      = "1.5",
         author       = "WltrH",
         shortdesc    = "Audio/sous-titres auto par dossier",
         description  = "Mémorise et applique audio + sous-titres par dossier.",
-        capabilities = { "input-listener", "meta-listener" }
+        capabilities = { "input-listener" }
     }
 end
 
@@ -239,46 +285,15 @@ end
 function close() deactivate() end
 
 function input_changed()
-    pending_pref = nil
     pcall(function()
         local item = vlc.input.item()
         if not item then return end
-        local folder = folder_of(item:uri())
+        local uri = item:uri()
+        local folder = folder_of(uri)
         local pref = folder and find_pref(folder)
         if not pref then return end
-        apply_track_pref(pref.audio_0idx, pref.sub_0idx)
-        if load_tracks() then
-            local aid = resolve_id(audio_tracks, pref.audio_label, -1)
-            local sid = resolve_id(sub_tracks,   pref.sub_label,   -1)
-            if apply_es(aid, sid) then
-                set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'"')
-            else
-                pending_pref = pref
-            end
-        else
-            pending_pref = pref
-        end
-    end)
-end
-
-function meta_changed()
-    pcall(function()
-        local pref = pending_pref
-        if not pref then
-            local item = vlc.input.item()
-            if not item then return end
-            local folder = folder_of(item:uri())
-            pref = folder and find_pref(folder)
-        end
-        if not pref then return end
-        if load_tracks() then
-            local aid = resolve_id(audio_tracks, pref.audio_label, -1)
-            local sid = resolve_id(sub_tracks,   pref.sub_label,   -1)
-            if apply_es(aid, sid) then
-                apply_track_pref(pref.audio_0idx, pref.sub_0idx)
-                pending_pref = nil
-                set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'"')
-            end
+        if apply_pref_with_retry(pref, uri) then
+            set_status('Auto: "'..pref.audio_label..'" / "'..(pref.sub_label ~= "" and pref.sub_label or "sans srt")..'"')
         end
     end)
 end
